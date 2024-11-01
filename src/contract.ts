@@ -1,45 +1,96 @@
-import { NearBindgen, near, call, NearPromise, AccountId, view, initialize, assert } from 'near-sdk-js';
+import { NearBindgen, near, call, NearPromise, AccountId, view, initialize, assert, Balance } from 'near-sdk-js';
+
+const CALL_GAS: bigint = BigInt("30000000000000");
+const NO_DEPOSIT: bigint = BigInt(0);
 
 @NearBindgen({ requireInit: true })
 class SlotMachine {
-  treasuryWallet: AccountId = ''; // Treasury wallet address
-  poolBalance: bigint = BigInt(0);
+  private owner: AccountId = ''; // contract owner account
+  private whitelisted_memecoins: Array<AccountId> = []; // whitelist of meme coins
+  private user_deposits: Map<AccountId, Map<AccountId, Balance>> = new Map();
 
-  @initialize({ privateFunction: true }) // Initialize the contract with the treasury wallet
-  init({ treasuryWallet }: { treasuryWallet: AccountId }) {
-    this.treasuryWallet = treasuryWallet;
-  }
-
-  @view({}) // This method is read-only and can be called for free
-  get_treasury_wallet(): AccountId {
-    return this.treasuryWallet;
+  @initialize({ privateFunction: true }) // initialize the contract owner
+  init({ owner }: { owner: AccountId }) {
+    this.owner = owner;
   }
 
   @view({})
-  get_pool_balance(): bigint {
-    return this.poolBalance;
+  get_contract_owner(): AccountId {
+    return this.owner;
   }
 
-  @call({ payableFunction: true }) // Deposit NEAR tokens into the pool
-  deposit() {
-    const amount = near.attachedDeposit(); // Amount sent with the transaction
-    assert(amount > BigInt(0), "Deposit amount must be greater than zero.");
-
-    // Transfer the amount to the pool (Deposit)
-    this.poolBalance += amount;
-    near.log(`Deposited ${amount.toString()} NEAR to the treasury by ${near.predecessorAccountId()}`);
+  @view({})
+  get_whitelist_of_memecoins(): Array<AccountId> {
+    return this.whitelisted_memecoins;
   }
 
-  @call({}) // Withdraw funds from the pool
-  withdraw({ to, amount }: { to: AccountId; amount: bigint }): NearPromise {
-    assert(near.signerAccountId() === this.treasuryWallet, "Only the treasury wallet can initiate withdrawals."); // Make sure this function only callable by treasury wallet
-    assert(amount <= this.poolBalance, "Insufficient pool balance.");
+  @view({})
+  get_user_balance(): Map<AccountId, Balance> {   // get user balance recorded on the contract, currently its all deposited amount by the user so far
+    return this.user_deposits.get(near.signerAccountId());
+  }
 
-    // Reduce the pool balance
-    this.poolBalance -= amount;
+  @view({})
+  get_user_memecoin_balance(memecoinAddress: AccountId): Balance {
+    // Retrieve the balance of a specific meme coin deposited by the user.
+    // This function checks the user's deposit records on the contract and 
+    // returns the amount of the specified meme coin (identified by memecoinAddress) 
+    // that the user has deposited so far.
+    return this.user_deposits.get(near.signerAccountId()).get(memecoinAddress);
+  }
 
-    // Transfer the amount to the specified wallet (Withdrawal)
-    near.log(`Withdrew ${amount.toString()} NEAR from the pool to ${to}`);
-    return NearPromise.new(to).transfer(amount);
+  @call({})
+  add_memecoins_to_whitelist(memecoinAddresses: Array<AccountId>) {
+    assert(near.signerAccountId() === this.owner, "Only contract owner can edit whitelist of meme coins.");
+    this.whitelisted_memecoins = Array.from(new Set([...this.whitelisted_memecoins, ...memecoinAddresses]));
+    return this.whitelisted_memecoins;
+  }
+
+  @call({})
+  remove_memecoins_from_whiteList(memecoinAddresses: Array<AccountId>) {
+    assert(near.signerAccountId() === this.owner, "Only contract owner can edit whitelist of meme coins.");
+    this.whitelisted_memecoins = this.whitelisted_memecoins.filter(whiteListedMemecoin => !memecoinAddresses.includes(whiteListedMemecoin));
+    return this.whitelisted_memecoins;
+  }
+
+  @call({})
+  ft_on_transfer({        // deposit function called by meme coin contract
+    sender_id: userAddress,    // the user account ID making the deposit
+    amount: tokenAmount,
+    msg,
+  }: {
+    sender_id: AccountId;
+    amount: Balance;
+    msg: string;
+  }): string {
+    const { memecoinAddress }: { memecoinAddress: AccountId } = JSON.parse(msg);
+    if (!this.whitelisted_memecoins.includes(memecoinAddress)) return tokenAmount.toString(); // return unused token amount - send all amount back in case of fail of deposit
+
+    const userDeposit = this.user_deposits.get(userAddress);
+
+    if (userDeposit == null) {
+      this.user_deposits.set(userAddress, new Map<AccountId, Balance>().set(memecoinAddress, tokenAmount))
+    } else {
+      const memecoinBalance = userDeposit.get(memecoinAddress);
+
+      if (memecoinBalance == null) {
+        userDeposit.set(memecoinAddress, tokenAmount);
+      } else {
+        userDeposit.set(memecoinAddress, tokenAmount + memecoinBalance);
+      }
+      this.user_deposits.set(userAddress, userDeposit);
+    }
+    return "0";   // return unused token amount - "0" means all amount used for deposit
+  }
+
+  @call({}) // withdraw funds from the contract
+  withdraw({ to, amount, memecoinAddress }: { to: AccountId; amount: Balance, memecoinAddress: AccountId }): NearPromise {
+    assert(near.signerAccountId() === this.owner, "Only the contract owner can initiate withdrawals."); // make sure this function only callable by the contract owner
+    assert(this.whitelisted_memecoins.includes(memecoinAddress), `The meme coin ${memecoinAddress} is not whitelisted.`);
+
+    // transfer the amount of specified meme coin to the specified account from the contract. (withdrawal)
+    near.log(`Withdrew ${amount.toString()} ${memecoinAddress} from the contract to ${to}`);
+    return NearPromise.new(memecoinAddress)
+    .functionCall('ft_transfer', JSON.stringify({ receiver_id: to, amount: amount }), NO_DEPOSIT, CALL_GAS)
+    .asReturn()
   }
 }
