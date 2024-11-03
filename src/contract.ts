@@ -5,18 +5,29 @@ const NO_DEPOSIT: bigint = BigInt(0);
 
 @NearBindgen({ requireInit: true })
 class SlotMachine {
+  // contract owner account
+  // owner has privilege of super admin, can edit admin list
   private owner: AccountId = ''; // contract owner account
+  // admin accounts
+  // every admin has privilege to edit whitelist of meme coins and withdraw funds from the contract
+  private admins: Array<AccountId> = [];
   private whitelisted_memecoins: Array<AccountId> = []; // whitelist of meme coins
   private user_deposits: Map<AccountId, Map<AccountId, Balance>> = new Map();
 
   @initialize({ privateFunction: true }) // initialize the contract owner
   init({ owner }: { owner: AccountId }) {
     this.owner = owner;
+    this.admins.push(owner);
   }
 
   @view({})
   get_contract_owner(): AccountId {
     return this.owner;
+  }
+
+  @view({})
+  get_contract_admins(): Array<AccountId> {
+    return this.admins;
   }
 
   @view({})
@@ -38,17 +49,17 @@ class SlotMachine {
     return this.user_deposits.get(near.signerAccountId()).get(memecoinAddress);
   }
 
-  @call({})
-  add_memecoins_to_whitelist(memecoinAddresses: Array<AccountId>) {
-    assert(near.signerAccountId() === this.owner, "Only contract owner can edit whitelist of meme coins.");
-    this.whitelisted_memecoins = Array.from(new Set([...this.whitelisted_memecoins, ...memecoinAddresses]));
-    return this.whitelisted_memecoins;
+  @call({})   // function to set admins of the contract, only callable by the contract owner
+  set_admins(adminAddresses: Array<AccountId>) {
+    assert(near.signerAccountId() === this.owner, "Only contract owner can edit list of admins.");
+    this.admins = adminAddresses;
+    return this.admins;
   }
 
-  @call({})
-  remove_memecoins_from_whiteList(memecoinAddresses: Array<AccountId>) {
-    assert(near.signerAccountId() === this.owner, "Only contract owner can edit whitelist of meme coins.");
-    this.whitelisted_memecoins = this.whitelisted_memecoins.filter(whiteListedMemecoin => !memecoinAddresses.includes(whiteListedMemecoin));
+  @call({})   // function to set whitelisted memecoins in the contract, only callable by the contract owner and admin
+  set_whitelisted_memecoins(memecoinAddresses: Array<AccountId>) {
+    assert(this.admins.includes(near.signerAccountId()), "Only contract owner or admin can edit whitelist of meme coins.");
+    this.whitelisted_memecoins = memecoinAddresses;
     return this.whitelisted_memecoins;
   }
 
@@ -84,7 +95,7 @@ class SlotMachine {
 
   @call({}) // withdraw funds from the contract
   withdraw({ to, amount, memecoinAddress }: { to: AccountId; amount: Balance, memecoinAddress: AccountId }): NearPromise {
-    assert(near.signerAccountId() === this.owner, "Only the contract owner can initiate withdrawals."); // make sure this function only callable by the contract owner
+    assert(this.admins.includes(near.signerAccountId()), "Only the contract owner or admin can initiate withdrawals."); // make sure this function only callable by the contract owner or admin
     assert(this.whitelisted_memecoins.includes(memecoinAddress), `The meme coin ${memecoinAddress} is not whitelisted.`);
 
     // transfer the amount of specified meme coin to the specified account from the contract. (withdrawal)
