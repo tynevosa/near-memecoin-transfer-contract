@@ -14,21 +14,34 @@ test.beforeEach(async t => {
 
   // Deploy contract
   const root = worker.rootAccount;
-  const contract = await root.createSubAccount('contract');
-  const treasury = await root.createSubAccount('treasury', { initialBalance: NEAR.parse("100 N").toString() });
-  const user = await root.createSubAccount('user', { initialBalance: NEAR.parse("10 N").toString() });
+  const main_contract = await root.createSubAccount('main_contract', { initialBalance: NEAR.parse("100 N").toString() });
+  const memecoin_contract = await root.createSubAccount('memecoin_contract', { initialBalance: NEAR.parse("100 N").toString() });
+  const user = await root.createSubAccount('user', { initialBalance: NEAR.parse("100 N").toString() });
 
   // Get wasm file path from package.json test script in folder above
-  await contract.deploy(process.argv[2]);
+  await main_contract.deploy(process.argv[2]);
+  await memecoin_contract.deploy('./sandbox-test/gear.enleap.wasm')
 
-  // Initialize contract, set treasury wallet
-  await contract.call(contract, "init", {
-    treasuryWallet: treasury,
+  // Initialize main contract, set the owner of the contract
+  await main_contract.call(main_contract, "init", {
+    owner: main_contract.accountId,
   });
 
+  // Initialize memecoin contract and mint the token
+  await memecoin_contract.call(memecoin_contract, "new", {
+    owner_id: memecoin_contract.accountId, 
+    total_supply: "10000000000000000000000", 
+    metadata: {
+      name: "Golden Dragon", 
+      description: "Golden Dragon", 
+      spec: "ft-1.0.0", 
+      symbol: "GDDG", 
+      decimals: 18,
+    }
+  })
+
   // Save state for test runs, it is unique for each test
-  t.context.worker = worker;
-  t.context.accounts = { root, contract, treasury, user };
+  t.context.accounts = { main_contract, memecoin_contract, user };
 });
 
 test.afterEach.always(async (t) => {
@@ -37,19 +50,55 @@ test.afterEach.always(async (t) => {
   });
 });
 
-// Test Withdrawal Functionality
+// Test Contract Functionality
 test('Test full contract', async (t) => {
-  const { root, contract, user, treasury } = t.context.accounts;
+  const { main_contract, memecoin_contract, user} = t.context.accounts
 
-  // Deposit funds first
-  await user.call(contract, 'deposit', {}, { attachedDeposit: NEAR.parse("3 N").toString() });
+  // Confirm main contract owner and total supply of the memecoin
+  const main_contract_owner = await main_contract.view('get_contract_owner', {})
+  const total_supply_memecoin = await memecoin_contract.view('ft_total_supply', {})
+  t.is(main_contract_owner, 'main_contract.test.near', 'Wrong contract owner')
+  t.is(total_supply_memecoin, '10000000000000000000000', 'Wrong total supply of the memecoin')
 
-  console.log("poolBalance", await contract.view('get_pool_balance', {}));
+  // Token allowence for user and airdrop
+  await user.call(memecoin_contract, 'storage_deposit', { account_id: user.accountId }, { attachedDeposit: NEAR.parse("1 N") })
+  await memecoin_contract.call(memecoin_contract, 'ft_transfer', 
+    { 
+      receiver_id: user.accountId, 
+      amount: '5000000000000000000000' 
+    }, 
+    { 
+      attachedDeposit: '1' 
+    }
+  )
+  const userMemecoinBalance = await memecoin_contract.view('ft_balance_of', { account_id: user.accountId })
+  t.is(userMemecoinBalance, '5000000000000000000000', 'Wrong user memecoin balance')
 
-  console.log("treasuryWallet", await contract.view('get_treasury_wallet', {}));
+  // Token allowence for main contract and set whitelist of memecoins
+  await main_contract.call(memecoin_contract, 'storage_deposit', 
+    { 
+      account_id: main_contract.accountId 
+    }, 
+    { 
+      attachedDeposit: NEAR.parse("1 N") 
+    }
+  )
+  await main_contract.call(main_contract, 'set_whitelisted_memecoins', [memecoin_contract.accountId])
+  const whitelistedMemecoins = await main_contract.view('get_whitelist_of_memecoins', {})
+  t.deepEqual(whitelistedMemecoins, [ memecoin_contract.accountId ], 'Wrong whitelisted memecoins')
 
-  // Attempt withdrawal by a user account
-  await t.throwsAsync(treasury.call(contract, 'withdraw', { to: user.accountId, amount: NEAR.parse("1 N").toString() }, { gas: "300000000000000" }));
-
-  console.log("poolBalance", await contract.view('get_pool_balance', {}));
+  // User deposit some token to the main contract
+  await user.call(memecoin_contract, 'ft_transfer_call', 
+    { 
+      receiver_id: main_contract.accountId, 
+      amount: '1000000000000000000000', 
+      msg: JSON.stringify({ memecoinAddress: memecoin_contract.accountId }), 
+    }, 
+    { 
+      attachedDeposit: '1', 
+      gas: '100000000000000' 
+    }
+  )
+  const userRemainingMemecoinBalance = await memecoin_contract.view('ft_balance_of', { account_id: user.accountId })
+  t.is(userRemainingMemecoinBalance, '4000000000000000000000', 'Wrong user remaining memecoin balance')
 });
