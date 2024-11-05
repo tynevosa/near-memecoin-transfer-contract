@@ -11,7 +11,7 @@ fi
 
 # Set variables
 ACCOUNT_ID=$1
-WASM_FILE="./build/slot_machine.wasm"
+WASM_FILE="../build/slot_machine.wasm"
 
 # Run commands
 near deploy $ACCOUNT_ID --wasmFile $WASM_FILE

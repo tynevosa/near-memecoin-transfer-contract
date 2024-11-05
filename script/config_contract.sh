@@ -44,14 +44,14 @@ input_var="["
 if [ -n "$i_flag" ]; then
   if [ -f "$i_flag" ]; then
     while IFS= read -r line || [ -n "$line" ]; do
-      array_string+="\"$line\","
+      input_var+="'$line',"
     done < "$i_flag"
     
-    array_string="${array_string%,}]"
+    input_var="${input_var%,}]"
   else
     echo "Input file $i_flag not found."
     exit 1
   fi
 fi
 
-near call $c_flag $f_flag "'"$input_var"'" --accountId $a_flag
+near call $c_flag $f_flag \"$input_var\" --accountId $a_flag
