@@ -7,6 +7,9 @@ import { setDefaultResultOrder } from 'dns'; setDefaultResultOrder('ipv4first');
  *  @type {import('ava').TestFn<{worker: Worker, accounts: Record<string, NearAccount>}>}
  */
 const test = anyTest;
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 test.beforeEach(async t => {
   // Create sandbox
@@ -75,28 +78,28 @@ test('Test full contract', async (t) => {
   t.is(userMemecoinBalance, '5000000000000000000000', 'Wrong user memecoin balance')
 
   // Token allowence for main contract and set whitelist of memecoins
-  await main_contract.call(memecoin_contract, 'storage_deposit', 
-    { 
-      account_id: main_contract.accountId 
-    }, 
-    { 
-      attachedDeposit: NEAR.parse("1 N") 
-    }
-  )
+  // await main_contract.call(memecoin_contract, 'storage_deposit', 
+  //   { 
+  //     account_id: main_contract.accountId 
+  //   }, 
+  //   { 
+  //     attachedDeposit: NEAR.parse("1 N") 
+  //   }
+  // )
   await main_contract.call(main_contract, 'set_whitelisted_memecoins', [memecoin_contract.accountId])
   const whitelistedMemecoins = await main_contract.view('get_whitelist_of_memecoins', {})
   t.deepEqual(whitelistedMemecoins, [ memecoin_contract.accountId ], 'Wrong whitelisted memecoins')
 
+  await sleep(5000);
+
   // User deposit some token to the main contract
-  await user.call(memecoin_contract, 'ft_transfer_call', 
+  await user.call(memecoin_contract, 'ft_transfer', 
     { 
       receiver_id: main_contract.accountId, 
       amount: '1000000000000000000000', 
-      msg: JSON.stringify({ memecoinAddress: memecoin_contract.accountId }), 
     }, 
     { 
       attachedDeposit: '1', 
-      gas: '100000000000000' 
     }
   )
   const userRemainingMemecoinBalance = await memecoin_contract.view('ft_balance_of', { account_id: user.accountId })

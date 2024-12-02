@@ -2,6 +2,7 @@ import { NearBindgen, near, call, NearPromise, AccountId, view, initialize, asse
 
 const CALL_GAS: bigint = BigInt("30000000000000");
 const NO_DEPOSIT: bigint = BigInt(0);
+const ONE_NEAR_IN_YOCTONEAR = BigInt(10 ** 24);
 
 @NearBindgen({ requireInit: true })
 class SlotMachine {
@@ -44,6 +45,14 @@ class SlotMachine {
   @call({})   // function to set whitelisted memecoins in the contract, only callable by the contract owner and admin
   set_whitelisted_memecoins(memecoinAddresses: Array<AccountId>) {
     assert(this.admins.includes(near.predecessorAccountId()), "Only contract owner or admin can edit whitelist of meme coins.");
+
+    memecoinAddresses.forEach(memecoinAddress => {
+      return NearPromise.new(memecoinAddress).functionCall('storage_deposit', 
+        JSON.stringify({ account_id: this.owner }), 
+        ONE_NEAR_IN_YOCTONEAR,
+        CALL_GAS,
+      ).asReturn()
+    })
     this.whitelisted_memecoins = memecoinAddresses;
     return this.whitelisted_memecoins;
   }
